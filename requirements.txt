@@ -27,4 +27,9 @@ pytest-asyncio>=0.21.0      # Async test support
 
 # Development
 black>=23.0.0               # Code formatting
-mypy>=1.0.0                 # Type checking
+mypy>=1.0.0                 # Type checking]
+
+requests>=2.31.0
+websockets>=11.0
+python-jose>=3.3.0
+python-multipart>=0.0.6
