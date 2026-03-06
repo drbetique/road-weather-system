@@ -1,0 +1,30 @@
+# Road Weather Monitoring System Dependencies
+# Core dependencies (Python 3.9+)
+
+# Database
+psycopg2-binary>=2.9.0      # PostgreSQL adapter
+
+# Web framework (for API/dashboard)
+fastapi>=0.100.0            # Modern async API framework
+uvicorn>=0.22.0             # ASGI server
+
+# Data processing
+pandas>=2.0.0               # Data manipulation
+numpy>=1.24.0               # Numerical operations
+
+# HTTP client (optional, for async operations)
+httpx>=0.24.0               # Modern HTTP client
+
+# Scheduling
+apscheduler>=3.10.0         # Background job scheduling
+
+# Configuration
+python-dotenv>=1.0.0        # Environment variables
+
+# Testing
+pytest>=7.0.0               # Testing framework
+pytest-asyncio>=0.21.0      # Async test support
+
+# Development
+black>=23.0.0               # Code formatting
+mypy>=1.0.0                 # Type checking

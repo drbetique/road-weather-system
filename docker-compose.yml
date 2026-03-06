@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: road-weather-db
+    environment:
+      POSTGRES_DB: road_weather
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-roadweather123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # FastAPI Backend
+  api:
+    build:
+      context: .
+      target: base
+    container_name: road-weather-api
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: road_weather
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-roadweather123}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Data Collector Service
+  collector:
+    build:
+      context: .
+      target: collector
+    container_name: road-weather-collector
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_NAME: road_weather
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-roadweather123}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Nginx for serving dashboard and reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: road-weather-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./dashboard:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  default:
+    name: road-weather-network
