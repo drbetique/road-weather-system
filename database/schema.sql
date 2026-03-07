@@ -4,7 +4,7 @@
 
 -- Enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "postgis";  -- For geographic queries
+-- PostGIS removed: not available on Railway
 
 -- Stations table: metadata about road weather stations
 CREATE TABLE IF NOT EXISTS stations (
@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS stations (
     name VARCHAR(100) NOT NULL,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
-    location GEOGRAPHY(POINT, 4326),  -- PostGIS geography
+    -- location column removed: PostGIS not available
     distance_km DOUBLE PRECISION,
     collection_status VARCHAR(50),
     state VARCHAR(50),
@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS stations (
 );
 
 -- Index for geographic queries
-CREATE INDEX IF NOT EXISTS idx_stations_location ON stations USING GIST(location);
+-- GIST index removed: PostGIS not available
 CREATE INDEX IF NOT EXISTS idx_stations_distance ON stations(distance_km);
 
 -- Weather readings table: time-series sensor data
