@@ -9,6 +9,7 @@ from typing import Optional, List
 from dataclasses import dataclass
 import logging
 from dotenv import load_dotenv
+from urllib.parse import urlparse
 
 
 logging.basicConfig(level=logging.INFO)
@@ -369,15 +370,40 @@ class DatabaseManager:
         self.conn = None
     
     def _build_connection_string(self) -> str:
-        """Build connection string from environment variables"""
+        """
+        Build a connection string from the environment.
+
+        DATABASE_URL wins when present: every hosted Postgres provider (Neon,
+        Supabase, Render) hands out a single DSN rather than discrete fields.
+        The DB_* variables remain as a fallback for local development.
+
+        Managed providers require TLS, so sslmode=require is appended for any
+        host that is not local. psycopg2 does not infer this and would
+        otherwise fail the handshake.
+        """
         env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
         load_dotenv(env_path)
-        host = os.getenv("DB_HOST", "localhost")
-        port = os.getenv("DB_PORT", "5432")
-        database = os.getenv("DB_NAME", "road_weather")
-        user = os.getenv("DB_USER", "postgres")
-        password = os.getenv("DB_PASSWORD", "")
-        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+        dsn = os.getenv("DATABASE_URL", "").strip()
+        if not dsn:
+            host = os.getenv("DB_HOST", "localhost")
+            port = os.getenv("DB_PORT", "5432")
+            database = os.getenv("DB_NAME", "road_weather")
+            user = os.getenv("DB_USER", "postgres")
+            password = os.getenv("DB_PASSWORD", "")
+            dsn = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+        # Some providers hand out the SQLAlchemy-style postgres:// prefix,
+        # which psycopg2 does not accept.
+        if dsn.startswith("postgres://"):
+            dsn = "postgresql://" + dsn[len("postgres://"):]
+
+        parsed = urlparse(dsn)
+        is_local = (parsed.hostname or "") in ("localhost", "127.0.0.1", "::1", "db")
+        if not is_local and "sslmode=" not in dsn:
+            dsn += "&sslmode=require" if parsed.query else "?sslmode=require"
+
+        return dsn
     
     def connect(self):
         """Establish database connection"""
@@ -557,5 +583,6 @@ def export_schema_to_file(filepath: str = "schema.sql"):
 
 if __name__ == "__main__":
     # Export schema for manual database setup
-    export_schema_to_file("database/schema.sql")
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    export_schema_to_file(os.path.join(project_root, "database", "schema.sql"))
     print("Database schema exported to database/schema.sql")

@@ -1,0 +1,75 @@
+# Periodically triggers one data collection cycle on the deployed API, which
+# is what fills the dashboard's History tab over time.
+#
+# The standalone collector (src/collector.py) needs an always-on process, and
+# Render's free tier offers no Background Workers, so collection is driven
+# from here instead.
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   BACKEND_URL  e.g. https://road-weather-api.onrender.com  (no trailing slash)
+#   API_KEY      must match API_KEY on the Render service
+#
+# Notes:
+#  - Scheduled runs on GitHub are best-effort and can be delayed at busy times.
+#  - GitHub disables schedules after 60 days without repository activity.
+#  - Each run costs Actions minutes on private repositories. Hourly is roughly
+#    720-1440 minutes a month; lower the frequency if that is tight, or drive
+#    the same endpoint from any external cron service instead.
+
+name: Collect road weather data
+
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: collect-weather-data
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Trigger a collection cycle
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          API_KEY: ${{ secrets.API_KEY }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${BACKEND_URL:-}" ] || [ -z "${API_KEY:-}" ]; then
+            echo "::error::BACKEND_URL and API_KEY repository secrets must be set."
+            exit 1
+          fi
+
+          # A free Render instance sleeps when idle and needs ~50s to wake, so
+          # the first attempt may time out. Retry with a widening timeout.
+          for attempt in 1 2 3; do
+            echo "Attempt $attempt..."
+            code=$(curl -sS -X POST \
+              -o response.json -w '%{http_code}' \
+              --max-time $((60 * attempt)) \
+              -H "X-API-Key: ${API_KEY}" \
+              "${BACKEND_URL%/}/api/collect") || code="000"
+
+            echo "HTTP ${code}"
+            [ -s response.json ] && cat response.json && echo
+
+            if [ "$code" = "200" ]; then
+              echo "Collection cycle completed."
+              exit 0
+            fi
+
+            # A missing database or a bad key will not fix itself on a retry.
+            if [ "$code" = "401" ] || [ "$code" = "503" ]; then
+              echo "::error::Collection refused (HTTP ${code}). Check API_KEY and DATABASE_URL."
+              exit 1
+            fi
+
+            sleep $((10 * attempt))
+          done
+
+          echo "::error::Collection did not succeed after 3 attempts."
+          exit 1

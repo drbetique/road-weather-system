@@ -33,17 +33,27 @@ logger = logging.getLogger(__name__)
 class DataCollector:
     """Background service for collecting road weather data"""
     
-    def __init__(self, db_manager: Optional[DatabaseManager] = None):
+    def __init__(
+        self,
+        db_manager: Optional[DatabaseManager] = None,
+        register_signals: bool = True,
+    ):
         self.digitraffic = DigitrafficClient()
         self.fmi = FMIClient()
         self.db = db_manager
         self.running = False
         self.stations = []
         self.station_names = {}
-        
-        # Setup signal handlers
-        signal.signal(signal.SIGINT, self._handle_shutdown)
-        signal.signal(signal.SIGTERM, self._handle_shutdown)
+
+        # Signal handlers only make sense for the standalone service. The API
+        # runs a collection cycle inside a worker thread, where signal.signal
+        # raises ValueError.
+        if register_signals:
+            try:
+                signal.signal(signal.SIGINT, self._handle_shutdown)
+                signal.signal(signal.SIGTERM, self._handle_shutdown)
+            except ValueError:
+                logger.debug("Signal handlers unavailable off the main thread")
     
     def _handle_shutdown(self, signum, frame):
         """Handle shutdown signals gracefully"""

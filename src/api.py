@@ -6,7 +6,7 @@ FastAPI application providing REST endpoints for the dashboard
 import json
 import logging
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -571,22 +571,109 @@ async def export_current_data():
         raise HTTPException(status_code=503, detail="Failed to export data")
     
     
+@app.post("/api/collect")
+def run_collection(request: Request):
+    """
+    Run one data collection cycle and persist the results.
+
+    This is what makes the history views fill up over time. The standalone
+    collector service (src/collector.py) needs an always-on worker, which the
+    Render free tier does not offer, so an external scheduler calls this
+    endpoint on a cron instead. It is behind the same X-API-Key check as every
+    other /api route.
+
+    Defined with `def` rather than `async def` so FastAPI runs it in a worker
+    thread: the collector performs blocking HTTP calls and would otherwise
+    stall the event loop.
+    """
+    if not db or not db.conn:
+        raise HTTPException(
+            status_code=503,
+            detail="No database configured; set DATABASE_URL to collect history",
+        )
+
+    from collector import DataCollector
+
+    collector = DataCollector(db_manager=db, register_signals=False)
+    if not collector.initialize():
+        raise HTTPException(status_code=503, detail="Collector failed to initialise")
+
+    started = datetime.utcnow()
+    try:
+        collector.run_collection_cycle()
+    except Exception as e:
+        logger.error(f"Collection cycle failed: {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail="Collection cycle failed")
+
+    return {
+        "status": "ok",
+        "started_at": started.isoformat(),
+        "duration_seconds": round((datetime.utcnow() - started).total_seconds(), 1),
+        "stations": len(collector.stations),
+    }
+
+
+def _parse_range(start: Optional[str], end: Optional[str]):
+    """Validate an optional YYYY-MM-DD range, returning (start, end) dates."""
+    if not start or not end:
+        return None
+    try:
+        s = date.fromisoformat(start)
+        e = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD")
+    if e < s:
+        raise HTTPException(status_code=400, detail="end must not precede start")
+    return s, e
+
+
+def _window(column: str, days: int, rng):
+    """
+    SQL fragment and params restricting `column` to the requested window.
+
+    An explicit start/end pair takes precedence over the rolling `days`
+    window, so a custom range in the dashboard queries the dates actually
+    picked rather than the last N days counted back from today.
+    """
+    if rng:
+        s, e = rng
+        return (
+            f"{column} >= %s::date AND {column} < %s::date + 1",
+            [s.isoformat(), e.isoformat()],
+        )
+    return f"{column} >= NOW() - (%s || ' days')::INTERVAL", [days]
+
+
+def _window_dates(days: int, rng) -> List[date]:
+    """Dates covered by the window, newest first, for the no-database path."""
+    if rng:
+        s, e = rng
+        span = min((e - s).days + 1, 366)
+        return [e - timedelta(days=i) for i in range(span)]
+    today = date.today()
+    return [today - timedelta(days=i) for i in range(days)]
+
+
 @app.get("/api/weather/history")
 async def get_weather_history(
-    days: int = Query(7, ge=1, le=30, description="Days of history"),
-    station_id: Optional[int] = Query(None, description="Filter by station ID")
+    days: int = Query(7, ge=1, le=366, description="Days of history"),
+    station_id: Optional[int] = Query(None, description="Filter by station ID"),
+    start: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
 ):
     """
     Temperature trends over past N days, grouped by day.
     Returns min/avg/max air_temp and road_temp per day per station.
     """
+    rng = _parse_range(start, end)
+
     if not db or not db.conn:
-        # Return mock data so dashboard still works without DB
-        from datetime import date, timedelta
-        today = date.today()
+        # No database configured: return correctly shaped rows with null
+        # measurements so the dashboard renders its "no historical data"
+        # state rather than failing.
         return [
             {
-                "date": (today - timedelta(days=i)).isoformat(),
+                "date": d.isoformat(),
                 "station_id": station_id or 0,
                 "station_name": "All stations",
                 "avg_air_temp": None,
@@ -596,7 +683,7 @@ async def get_weather_history(
                 "min_road_temp": None,
                 "reading_count": 0,
             }
-            for i in range(days)
+            for d in _window_dates(days, rng)
         ]
 
     sql = """
@@ -612,9 +699,10 @@ async def get_weather_history(
             COUNT(*)                               AS reading_count
         FROM weather_readings wr
         JOIN stations s ON s.id = wr.station_id
-        WHERE wr.measured_at >= NOW() - (%s || ' days')::INTERVAL
+        WHERE {window}
     """
-    params = [days]
+    _w, params = _window("wr.measured_at", days, rng)
+    sql = sql.format(window=_w)
     if station_id:
         sql += " AND wr.station_id = %s"
         params.append(station_id)
@@ -633,24 +721,26 @@ async def get_weather_history(
 
 @app.get("/api/treatments/history")
 async def get_treatment_history(
-    days: int = Query(7, ge=1, le=30, description="Days of history"),
-    station_id: Optional[int] = Query(None, description="Filter by station ID")
+    days: int = Query(7, ge=1, le=366, description="Days of history"),
+    station_id: Optional[int] = Query(None, description="Filter by station ID"),
+    start: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
 ):
     """
     Treatment recommendation history grouped by day and urgency level.
     Used for the treatment history bar chart.
     """
+    rng = _parse_range(start, end)
+
     if not db or not db.conn:
-        from datetime import date, timedelta
-        today = date.today()
         return [
             {
-                "date": (today - timedelta(days=i)).isoformat(),
+                "date": d.isoformat(),
                 "urgency_name": "NONE",
                 "count": 0,
                 "avg_confidence": 0,
             }
-            for i in range(days)
+            for d in _window_dates(days, rng)
         ]
 
     sql = """
@@ -660,9 +750,10 @@ async def get_treatment_history(
             COUNT(*)                    AS count,
             ROUND(AVG(tr.confidence)::numeric, 2) AS avg_confidence
         FROM treatment_recommendations tr
-        WHERE tr.created_at >= NOW() - (%s || ' days')::INTERVAL
+        WHERE {window}
     """
-    params = [days]
+    _w, params = _window("tr.created_at", days, rng)
+    sql = sql.format(window=_w)
     if station_id:
         sql += " AND tr.station_id = %s"
         params.append(station_id)
@@ -681,24 +772,26 @@ async def get_treatment_history(
 
 @app.get("/api/risks/history")
 async def get_risk_history(
-    days: int = Query(30, ge=1, le=90, description="Days of history")
+    days: int = Query(30, ge=1, le=366, description="Days of history"),
+    start: Optional[str] = Query(None, description="Range start, YYYY-MM-DD"),
+    end: Optional[str] = Query(None, description="Range end, YYYY-MM-DD"),
 ):
     """
     Risk period frequency by day.
     Counts how many URGENT/CRITICAL recommendations were generated each day.
     Used for risk frequency analysis chart.
     """
+    rng = _parse_range(start, end)
+
     if not db or not db.conn:
-        from datetime import date, timedelta
-        today = date.today()
         return [
             {
-                "date": (today - timedelta(days=i)).isoformat(),
+                "date": d.isoformat(),
                 "urgent_count": 0,
                 "critical_count": 0,
                 "total_count": 0,
             }
-            for i in range(days)
+            for d in _window_dates(days, rng)
         ]
 
     sql = """
@@ -708,13 +801,15 @@ async def get_risk_history(
             COUNT(*) FILTER (WHERE urgency_level >= 5) AS critical_count,
             COUNT(*)                                   AS total_count
         FROM treatment_recommendations
-        WHERE created_at >= NOW() - (%s || ' days')::INTERVAL
+        WHERE {window}
         GROUP BY DATE(created_at)
         ORDER BY date DESC
     """
+    _w, params = _window("created_at", days, rng)
+    sql = sql.format(window=_w)
     try:
         with db.conn.cursor() as cur:
-            cur.execute(sql, [days])
+            cur.execute(sql, params)
             cols = [d[0] for d in cur.description]
             rows = cur.fetchall()
         return [dict(zip(cols, row)) for row in rows]

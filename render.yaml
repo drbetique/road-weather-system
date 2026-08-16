@@ -7,9 +7,11 @@
 # shaped mock responses. Live endpoints read Digitraffic/FMI on demand and are
 # fully functional.
 #
-# To add persistence later: provision a database, add DATABASE_URL support to
-# src/database.py (it currently builds a DSN from discrete DB_* vars), and
-# deploy the collector as a worker or cron job.
+# History/persistence: set DATABASE_URL to any hosted Postgres. Because free
+# instances have no Background Workers, collection is driven externally by
+# .github/workflows/collect-weather-data.yml, which POSTs to /api/collect on a
+# schedule. Without DATABASE_URL the live endpoints still work and the History
+# tab reports that it has no data yet.
 
 services:
   - type: web
@@ -39,3 +41,7 @@ services:
         sync: false
       - key: LOG_LEVEL
         value: INFO
+      # Postgres DSN. Without it the API still serves live weather, but the
+      # History tab has nothing to accumulate into and stays empty.
+      - key: DATABASE_URL
+        sync: false

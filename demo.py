@@ -12,10 +12,12 @@ This script:
 
 import json
 import sys
+import os
 from datetime import datetime
 
-# Add src directory to path
-sys.path.insert(0, 'src')
+# Add src directory to path (relative to this file, so it works anywhere)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
 from digitraffic_client import DigitrafficClient, StationMetadata, WeatherReading
 from treatment_algorithm import TreatmentDecisionEngine, analyze_area, TreatmentUrgency
@@ -140,7 +142,9 @@ def main():
         "recommendations": [r.to_dict() for r in recommendations]
     }
     
-    output_path = "data/latest_analysis.json"
+    output_dir = os.path.join(PROJECT_ROOT, "data")
+    os.makedirs(output_dir, exist_ok=True)
+    output_path = os.path.join(output_dir, "latest_analysis.json")
     with open(output_path, "w") as f:
         json.dump(export_data, f, indent=2)
     
