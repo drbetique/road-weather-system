@@ -1,0 +1,41 @@
+# Render Blueprint - Road Weather Monitoring System API
+#
+# Deploys the FastAPI service only. The collector (src/collector.py) is NOT
+# deployed: Render Background Workers have no free instance type and Cron Jobs
+# carry a $1/month minimum. Without the collector nothing writes to Postgres,
+# so no database is provisioned either -- the history endpoints fall back to
+# shaped mock responses. Live endpoints read Digitraffic/FMI on demand and are
+# fully functional.
+#
+# To add persistence later: provision a database, add DATABASE_URL support to
+# src/database.py (it currently builds a DSN from discrete DB_* vars), and
+# deploy the collector as a worker or cron job.
+
+services:
+  - type: web
+    name: road-weather-api
+    runtime: python
+    plan: free
+    region: frankfurt          # closest region to Forssa, Finland
+    healthCheckPath: /health
+
+    buildCommand: pip install -r requirements.txt
+
+    # --app-dir puts src/ on sys.path so sibling imports (database, config,
+    # digitraffic_client, ...) resolve. Running `uvicorn src.api:app` from the
+    # repo root fails: `database` resolves to the top-level database/ directory.
+    # $PORT is assigned by Render and must be honoured.
+    startCommand: uvicorn api:app --app-dir src --host 0.0.0.0 --port $PORT
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # Shared secret required by every /api/* route. Set in the Render
+      # dashboard; must match API_KEY in the Vercel project.
+      - key: API_KEY
+        sync: false
+      # Comma-separated origins for direct browser calls (scheme://host, no path).
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: LOG_LEVEL
+        value: INFO

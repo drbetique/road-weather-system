@@ -28,7 +28,8 @@ COPY dashboard/ ./dashboard/
 EXPOSE 8000
 
 # Default command runs the API server
-CMD ["python", "-m", "uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]
+# --app-dir src is required: sibling imports in src/ are not resolvable from /app.
+CMD ["python", "-m", "uvicorn", "api:app", "--app-dir", "src", "--host", "0.0.0.0", "--port", "8000"]
 
 
 # Collector service variant

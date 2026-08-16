@@ -5,22 +5,33 @@ FastAPI application providing REST endpoints for the dashboard
 
 import json
 import logging
+import secrets
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 import asyncio
 
-from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    BackgroundTasks,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from database import DatabaseManager
 
 # Import our modules
+# NOTE: sys.path must be extended BEFORE importing any sibling module in src/,
+# otherwise `database` resolves to the top-level database/ directory (schema only).
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from database import DatabaseManager
 from config import REGION_LAT, REGION_LON, REGION_STATIONS
 from digitraffic_client import DigitrafficClient, StationMetadata, WeatherReading
 from treatment_algorithm import (
@@ -159,14 +170,72 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS middleware for dashboard
+# CORS middleware for dashboard.
+# Requests normally arrive server-to-server from the Next.js proxy (no Origin
+# header, so CORS does not apply). This allowlist only covers direct browser
+# calls. Never widen it back to "*": combined with allow_credentials it makes
+# Starlette echo any caller's Origin.
+ALLOWED_ORIGINS = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your domain
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["X-API-Key", "Content-Type"],
 )
+
+
+# ---------------------------------------------------------------------------
+# API key authentication
+# ---------------------------------------------------------------------------
+# The service is publicly reachable on Render, so every /api/* route requires a
+# shared secret. The Next.js proxy holds it server-side and injects the header;
+# it is never exposed to the browser.
+#
+# Fails closed: if API_KEY is unset the API refuses to serve data rather than
+# silently running wide open. /health stays public for Render health checks.
+API_KEY = os.getenv("API_KEY", "")
+
+if not API_KEY:
+    logger.critical(
+        "API_KEY is not set. All /api/* requests will be rejected with 503. "
+        "Set API_KEY in the Render dashboard to enable the API."
+    )
+
+
+def _is_valid_key(candidate: Optional[str]) -> bool:
+    """Constant-time comparison to avoid leaking the key via timing."""
+    if not API_KEY or not candidate:
+        return False
+    return secrets.compare_digest(candidate, API_KEY)
+
+
+@app.middleware("http")
+async def api_key_middleware(request: Request, call_next):
+    path = request.url.path
+
+    # Preflight is handled by CORSMiddleware; public paths need no key.
+    if request.method == "OPTIONS" or not path.startswith("/api/"):
+        return await call_next(request)
+
+    if not API_KEY:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "API key not configured on the server"},
+        )
+
+    if not _is_valid_key(request.headers.get("X-API-Key")):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Invalid or missing X-API-Key header"},
+        )
+
+    return await call_next(request)
 
 
 # Health check endpoint
@@ -714,7 +783,12 @@ async def get_week_comparison(
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(websocket: WebSocket, api_key: str = Query(None)):
+    # Browsers cannot set custom headers on a WebSocket handshake, so the key
+    # travels as a query parameter here. 1008 = policy violation.
+    if not _is_valid_key(api_key):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         while True:
