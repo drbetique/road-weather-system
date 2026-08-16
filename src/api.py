@@ -212,7 +212,12 @@ def _is_valid_key(candidate: Optional[str]) -> bool:
     """Constant-time comparison to avoid leaking the key via timing."""
     if not API_KEY or not candidate:
         return False
-    return secrets.compare_digest(candidate, API_KEY)
+    # Compare as bytes: secrets.compare_digest raises TypeError on str inputs
+    # containing non-ASCII characters, which would surface as a 500 instead of
+    # a clean 401 for a header like "X-API-Key: café".
+    return secrets.compare_digest(
+        candidate.encode("utf-8"), API_KEY.encode("utf-8")
+    )
 
 
 @app.middleware("http")
