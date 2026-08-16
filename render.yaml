@@ -19,6 +19,10 @@ services:
     runtime: python
     plan: free
     region: frankfurt          # closest region to Forssa, Finland
+    # Pinned so the Blueprint owns the deploy branch. Without this Render keeps
+    # whichever branch was picked in the UI at creation time, which was the
+    # migration branch and is now merged.
+    branch: master
     healthCheckPath: /health
 
     buildCommand: pip install -r requirements.txt
