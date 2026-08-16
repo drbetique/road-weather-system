@@ -9,7 +9,6 @@ import secrets
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
-import asyncio
 
 from fastapi import (
     FastAPI,
@@ -17,8 +16,6 @@ from fastapi import (
     Query,
     BackgroundTasks,
     Request,
-    WebSocket,
-    WebSocketDisconnect,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -786,36 +783,6 @@ async def get_week_comparison(
         logger.error(f"Comparison query failed: {e}")
         raise HTTPException(status_code=503, detail="Failed to fetch comparison data")
 
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, api_key: str = Query(None)):
-    # Browsers cannot set custom headers on a WebSocket handshake, so the key
-    # travels as a query parameter here. 1008 = policy violation.
-    if not _is_valid_key(api_key):
-        await websocket.close(code=1008)
-        return
-    await websocket.accept()
-    try:
-        while True:
-            await asyncio.sleep(30)
-            try:
-                station_ids = [s.id for s in cached_stations[:10]]
-                readings = digitraffic_client.get_station_data(station_ids)
-                station_names = {s.id: s.name for s in cached_stations}
-                recommendations = analyze_area(readings, station_names)
-                critical_count = sum(1 for r in recommendations if r.urgency.value >= TreatmentUrgency.URGENT.value)
-                treatment_count = sum(1 for r in recommendations if r.urgency.value >= TreatmentUrgency.PREVENTIVE.value)
-                await websocket.send_json({
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "critical_count": critical_count,
-                    "treatment_needed_count": treatment_count,
-                    "stations_count": len(cached_stations),
-                    "priority_station": recommendations[0].station_name if recommendations else None,
-                })
-            except Exception as e:
-                logger.error(f"WebSocket update error: {e}")
-    except WebSocketDisconnect:
-        pass
 
 if __name__ == "__main__":
     import uvicorn
