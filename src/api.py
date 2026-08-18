@@ -6,6 +6,7 @@ FastAPI application providing REST endpoints for the dashboard
 import json
 import logging
 import secrets
+import time
 from datetime import datetime, timedelta, date
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
@@ -240,6 +241,42 @@ async def api_key_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+
+# ---------------------------------------------------------------------------
+# Station list recovery
+# ---------------------------------------------------------------------------
+# cached_stations is filled once during startup. Digitraffic intermittently
+# answers 503, and without a retry that single failure leaves the instance
+# reporting zero stations for its whole lifetime -- on a free instance that
+# sleeps after 15 minutes idle, potentially an hour. Every endpoint reads the
+# list through ensure_stations() so a transient upstream failure heals itself
+# on the next request instead of requiring a restart.
+_last_station_attempt = 0.0
+_STATION_RETRY_COOLDOWN_S = 60.0
+
+
+def ensure_stations(radius_km: float = 50) -> List[StationMetadata]:
+    """Return the cached stations, refetching once per cooldown if empty."""
+    global cached_stations, _last_station_attempt
+
+    if cached_stations:
+        return cached_stations
+
+    now = time.monotonic()
+    if now - _last_station_attempt < _STATION_RETRY_COOLDOWN_S:
+        # A sustained outage must not turn every request into an upstream call.
+        return cached_stations
+    _last_station_attempt = now
+
+    try:
+        cached_stations = digitraffic_client.get_nearby_stations(radius_km=radius_km)
+        logger.info(f"Recovered station list: {len(cached_stations)} stations")
+    except Exception as e:
+        logger.warning(f"Station list still unavailable, will retry: {e}")
+
+    return cached_stations
+
+
 # Health check endpoint
 @app.get("/health")
 async def health_check():
@@ -285,7 +322,7 @@ async def get_stations(
 @app.get("/api/stations/{station_id}", response_model=StationResponse)
 async def get_station(station_id: int):
     """Get specific station details"""
-    station = next((s for s in cached_stations if s.id == station_id), None)
+    station = next((s for s in ensure_stations() if s.id == station_id), None)
     if not station:
         raise HTTPException(status_code=404, detail="Station not found")
     
@@ -314,7 +351,7 @@ async def get_current_weather(
     if station_ids:
         ids = [int(x.strip()) for x in station_ids.split(",")]
     else:
-        ids = [s.id for s in cached_stations[:limit]]
+        ids = [s.id for s in ensure_stations()[:limit]]
     
     try:
         readings = digitraffic_client.get_station_data(ids)
@@ -323,7 +360,7 @@ async def get_current_weather(
         logger.error(f"Failed to fetch weather data: {e}")
         raise HTTPException(status_code=503, detail="Failed to fetch weather data")
     
-    station_names = {s.id: s.name for s in cached_stations}
+    station_names = {s.id: s.name for s in ensure_stations()}
     
     return [
         WeatherReadingResponse(
@@ -358,7 +395,7 @@ async def get_recommendations(
     if station_ids:
         ids = [int(x.strip()) for x in station_ids.split(",")]
     else:
-        ids = [s.id for s in cached_stations[:10]]
+        ids = [s.id for s in ensure_stations()[:10]]
     
     try:
         readings = digitraffic_client.get_station_data(ids)
@@ -366,7 +403,7 @@ async def get_recommendations(
         logger.error(f"Failed to fetch weather data: {e}")
         raise HTTPException(status_code=503, detail="Failed to fetch weather data")
     
-    station_names = {s.id: s.name for s in cached_stations}
+    station_names = {s.id: s.name for s in ensure_stations()}
     recommendations = analyze_area(readings, station_names)
     
     # Filter by urgency
@@ -447,10 +484,10 @@ async def get_forecast_risks(
 async def get_dashboard_summary():
     """Get summary data for dashboard"""
     try:
-        station_ids = [s.id for s in cached_stations[:10]]
+        station_ids = [s.id for s in ensure_stations()[:10]]
         readings = digitraffic_client.get_station_data(station_ids)
         
-        station_names = {s.id: s.name for s in cached_stations}
+        station_names = {s.id: s.name for s in ensure_stations()}
         recommendations = analyze_area(readings, station_names) or []
         
         forecasts = fmi_client.get_forecast(hours_ahead=24)
@@ -464,7 +501,7 @@ async def get_dashboard_summary():
         return DashboardSummary(
             timestamp=datetime.utcnow().isoformat(),
             location={"name": "Forssa", "lat": REGION_LAT, "lon": REGION_LON},
-            stations_count=len(cached_stations),
+            stations_count=len(ensure_stations()),
             readings_count=len(readings),
             critical_count=critical_count,
             treatment_needed_count=treatment_count,
@@ -492,16 +529,16 @@ async def get_dashboard_summary():
 async def get_map_stations():
     """Get station data formatted for map display"""
     try:
-        station_ids = [s.id for s in cached_stations[:15]]
+        station_ids = [s.id for s in ensure_stations()[:15]]
         readings = digitraffic_client.get_station_data(station_ids)
-        station_names = {s.id: s.name for s in cached_stations}
+        station_names = {s.id: s.name for s in ensure_stations()}
         recommendations = analyze_area(readings, station_names)
         
         rec_by_station = {r.station_id: r for r in recommendations}
         reading_by_station = {r.station_id: r for r in readings}
         
         markers = []
-        for station in cached_stations[:15]:
+        for station in ensure_stations()[:15]:
             reading = reading_by_station.get(station.id)
             rec = rec_by_station.get(station.id)
             
@@ -533,9 +570,9 @@ async def get_map_stations():
 async def export_current_data():
     """Export current data as JSON for external systems"""
     try:
-        station_ids = [s.id for s in cached_stations[:10]]
+        station_ids = [s.id for s in ensure_stations()[:10]]
         readings = digitraffic_client.get_station_data(station_ids)
-        station_names = {s.id: s.name for s in cached_stations}
+        station_names = {s.id: s.name for s in ensure_stations()}
         recommendations = analyze_area(readings, station_names)
         
         return {
@@ -549,7 +586,7 @@ async def export_current_data():
                     "lon": s.longitude,
                     "distance_km": s.distance_km
                 }
-                for s in cached_stations[:10]
+                for s in ensure_stations()[:10]
             ],
             "readings": [
                 {
