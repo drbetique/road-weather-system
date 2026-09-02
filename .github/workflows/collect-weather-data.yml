@@ -10,17 +10,19 @@
 #   API_KEY      must match API_KEY on the Render service
 #
 # Notes:
-#  - Scheduled runs on GitHub are best-effort and can be delayed at busy times.
+#  - Scheduled runs on GitHub are best-effort. In practice fewer than half of
+#    the requested slots fire, which is why this runs twice an hour to land
+#    roughly one collection per hour.
 #  - GitHub disables schedules after 60 days without repository activity.
-#  - Each run costs Actions minutes on private repositories. Hourly is roughly
-#    720-1440 minutes a month; lower the frequency if that is tight, or drive
-#    the same endpoint from any external cron service instead.
+#  - Each run costs Actions minutes on private repositories. At this cadence
+#    that is roughly 700 minutes a month against the 2000 included; drop back
+#    to "0 * * * *" if that headroom is needed elsewhere.
 
 name: Collect road weather data
 
 on:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "0,30 * * * *"
   workflow_dispatch:
 
 concurrency:
@@ -30,8 +32,45 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
+      - name: Wake the backend
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+        run: |
+          set -uo pipefail
+
+          if [ -z "${BACKEND_URL:-}" ]; then
+            echo "::error::BACKEND_URL repository secret must be set."
+            exit 1
+          fi
+
+          # A free Render instance is torn down after 15 minutes idle, and the
+          # cold start is not the ~50s the docs suggest: a recorded start took
+          # 3m40s to run the process and did not receive routed traffic until
+          # 13m42s after the first request.
+          #
+          # Holding a POST open across that is what broke this job -- the
+          # request timed out before the router had anywhere to send it, and a
+          # collection cycle was lost. So the wake is a separate, cheap phase:
+          # poll the public /health endpoint until it answers, and only then
+          # spend a request on collection. /health needs no API key.
+          for attempt in $(seq 1 40); do
+            code=$(curl -sS -o /dev/null -w '%{http_code}' \
+              --max-time 20 "${BACKEND_URL%/}/health") || code="000"
+
+            if [ "$code" = "200" ]; then
+              echo "Backend awake after ${attempt} probe(s)."
+              exit 0
+            fi
+
+            echo "Probe ${attempt}: HTTP ${code}, still waking..."
+            sleep 10
+          done
+
+          echo "::error::Backend did not answer /health within ~15 minutes. The Render service may be down rather than merely asleep."
+          exit 1
+
       - name: Trigger a collection cycle
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
@@ -39,18 +78,19 @@ jobs:
         run: |
           set -uo pipefail
 
-          if [ -z "${BACKEND_URL:-}" ] || [ -z "${API_KEY:-}" ]; then
-            echo "::error::BACKEND_URL and API_KEY repository secrets must be set."
+          if [ -z "${API_KEY:-}" ]; then
+            echo "::error::API_KEY repository secret must be set."
             exit 1
           fi
 
-          # A free Render instance sleeps when idle and needs ~50s to wake, so
-          # the first attempt may time out. Retry with a widening timeout.
-          for attempt in 1 2 3; do
-            echo "Attempt $attempt..."
+          # The instance is warm now, so a cycle takes about ten seconds. The
+          # generous timeout covers a slow response from Digitraffic, not a
+          # cold start.
+          for attempt in 1 2; do
+            echo "Attempt ${attempt}..."
             code=$(curl -sS -X POST \
               -o response.json -w '%{http_code}' \
-              --max-time $((60 * attempt)) \
+              --max-time 120 \
               -H "X-API-Key: ${API_KEY}" \
               "${BACKEND_URL%/}/api/collect") || code="000"
 
@@ -68,8 +108,8 @@ jobs:
               exit 1
             fi
 
-            sleep $((10 * attempt))
+            sleep 15
           done
 
-          echo "::error::Collection did not succeed after 3 attempts."
+          echo "::error::Collection did not succeed after 2 attempts."
           exit 1
