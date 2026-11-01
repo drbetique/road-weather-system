@@ -146,9 +146,6 @@ async def lifespan(app: FastAPI):
     global db
     db = DatabaseManager()
     db.connect()
-    # Reads below depend on the current column names, so migrate before the
-    # first request rather than waiting for the next collection cycle.
-    db.migrate()
     
     # Pre-fetch stations
     try:
