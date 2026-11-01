@@ -184,12 +184,18 @@ This project supports circular economy principles by:
 
 ## Configuration
 
-Edit `.env` or `src/config.py` to customize:
+The monitored region is set per deployment through environment variables:
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REGION_NAME` | `Monitored region` | Display name returned by the API |
+| `REGION_LAT` | `60.8143` | Latitude of the region centre |
+| `REGION_LON` | `23.6208` | Longitude of the region centre |
+
+Stations are discovered within `STATION_SEARCH_RADIUS_KM` of the centre. Other
+tuning lives in `src/config.py`:
 
 ```python
-# Location
-REGION_LAT = 60.8143
-REGION_LON = 23.6208
 STATION_SEARCH_RADIUS_KM = 50
 
 # Treatment thresholds
@@ -220,9 +226,14 @@ POLLING_INTERVAL_SECONDS = 300  # 5 minutes
 - [ ] Mobile app for maintenance crews
 - [ ] Integration with city maintenance systems
 
+## Data attribution
+
+Road weather data: Fintraffic / digitraffic.fi, licensed under CC BY 4.0.
+Forecast data: Finnish Meteorological Institute open data, licensed under CC BY 4.0.
+
 ## License
 
-Copyright © 2026 Victor Betiku. All rights reserved.
+Copyright © 2026 Victor Betiku. All rights reserved. See [LICENSE](LICENSE).
 
 ## Author
 

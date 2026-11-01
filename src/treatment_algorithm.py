@@ -307,7 +307,7 @@ def main():
     station_ids = [s.id for s in nearby[:5]]
     readings = client.get_station_data(station_ids)
     
-    print("\n=== Treatment Recommendations for Forssa Area ===")
+    print("\n=== Treatment Recommendations ===")
     print("=" * 60)
     
     recommendations = analyze_area(readings, station_names)

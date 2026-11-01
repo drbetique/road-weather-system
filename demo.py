@@ -5,7 +5,7 @@ Demonstrates real-time data fetching and treatment recommendations
 
 This script:
 1. Connects to Digitraffic API
-2. Finds road weather stations near Forssa
+2. Finds road weather stations near the region centre
 3. Fetches current conditions
 4. Generates treatment recommendations
 """
@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(PROJECT_ROOT, 'src'))
 
 from digitraffic_client import DigitrafficClient, StationMetadata, WeatherReading
 from treatment_algorithm import TreatmentDecisionEngine, analyze_area, TreatmentUrgency
-from config import REGION_LAT, REGION_LON
+from config import REGION_NAME, REGION_LAT, REGION_LON
 
 
 def print_header(text: str):
@@ -65,15 +65,15 @@ def get_urgency_emoji(urgency: TreatmentUrgency) -> str:
 
 
 def main():
-    print_header("ROAD WEATHER MONITORING SYSTEM - FORSSA AREA")
-    print(f"  Location: Forssa, Finland ({REGION_LAT}°N, {REGION_LON}°E)")
+    print_header("ROAD WEATHER MONITORING SYSTEM")
+    print(f"  Location: {REGION_NAME} ({REGION_LAT}°N, {REGION_LON}°E)")
     print(f"  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Initialize client
     client = DigitrafficClient()
     
     # Step 1: Find nearby stations
-    print_header("STEP 1: Finding Road Weather Stations Near Forssa")
+    print_header("STEP 1: Finding Road Weather Stations Near the Region Centre")
     nearby_stations = client.get_nearby_stations(radius_km=50)
     
     print(f"\n  Found {len(nearby_stations)} active stations within 50km")
@@ -137,7 +137,7 @@ def main():
     
     export_data = {
         "timestamp": datetime.now().isoformat(),
-        "location": {"name": "Forssa", "lat": REGION_LAT, "lon": REGION_LON},
+        "location": {"name": REGION_NAME, "lat": REGION_LAT, "lon": REGION_LON},
         "stations_analyzed": len(readings),
         "recommendations": [r.to_dict() for r in recommendations]
     }

@@ -18,7 +18,7 @@ services:
     name: road-weather-api
     runtime: python
     plan: free
-    region: frankfurt          # closest region to Forssa, Finland
+    region: frankfurt          # closest Render region to Finland
     # Pinned so the Blueprint owns the deploy branch. Without this Render keeps
     # whichever branch was picked in the UI at creation time, which was the
     # migration branch and is now merged.
@@ -36,6 +36,10 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # Display name for the monitored area. Its centre is REGION_LAT/REGION_LON,
+      # which default to the original deployment's coordinates when unset.
+      - key: REGION_NAME
+        value: Monitored region
       # Shared secret required by every /api/* route. Set in the Render
       # dashboard; must match API_KEY in the Vercel project.
       - key: API_KEY

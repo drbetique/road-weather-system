@@ -16,6 +16,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # SQL Schema for PostgreSQL
+# Brings databases created by earlier versions up to the current schema. Each
+# step is idempotent, so this is safe to run on every start.
+#
+# stations.distance_km became distance_km when the monitored region
+# was made configurable. The views are dropped first because CREATE OR REPLACE
+# VIEW cannot rename an output column; SCHEMA_SQL recreates them.
+MIGRATIONS_SQL = """
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'stations' AND column_name = 'distance_km'
+    ) THEN
+        DROP VIEW IF EXISTS current_conditions;
+        DROP VIEW IF EXISTS latest_recommendations;
+        ALTER TABLE stations RENAME COLUMN distance_km TO distance_km;
+    END IF;
+END $$;
+"""
+
 SCHEMA_SQL = """
 -- Road Weather Monitoring System Database Schema
 -- Version: 1.0
@@ -426,6 +446,7 @@ class DatabaseManager:
         
         try:
             with self.conn.cursor() as cur:
+                cur.execute(MIGRATIONS_SQL)
                 cur.execute(SCHEMA_SQL)
             self.conn.commit()
             logger.info("Database schema initialized")
@@ -435,6 +456,25 @@ class DatabaseManager:
             self.conn.rollback()
             return False
     
+    def migrate(self) -> bool:
+        """Apply MIGRATIONS_SQL without touching the rest of the schema."""
+        if not self.conn:
+            return False
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(MIGRATIONS_SQL)
+                # The migration drops these views; recreate them from the
+                # current definitions in SCHEMA_SQL if that happened.
+                cur.execute("SELECT to_regclass('current_conditions') IS NULL")
+                if cur.fetchone()[0]:
+                    cur.execute(SCHEMA_SQL)
+            self.conn.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Schema migration failed: {e}")
+            self.conn.rollback()
+            return False
+
     def insert_station(self, station: Station):
         """Insert or update station metadata"""
         if not self.conn:

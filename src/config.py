@@ -1,16 +1,17 @@
 """
-Road Weather Monitoring System Configuration
-Road weather monitoring and winter maintenance decision support
-Author: Victor Betiku
+Road Weather Monitoring System configuration.
 """
 
 import os
 from dataclasses import dataclass
 from typing import List
 
-# Forssa coordinates (city center)
-REGION_LAT = 60.8143
-REGION_LON = 23.6208
+# Centre of the monitored region. Stations are discovered within
+# STATION_SEARCH_RADIUS_KM of this point, and forecasts are fetched for it.
+# Override per deployment with REGION_NAME, REGION_LAT and REGION_LON.
+REGION_NAME = os.getenv("REGION_NAME", "Monitored region")
+REGION_LAT = float(os.getenv("REGION_LAT", "60.8143"))
+REGION_LON = float(os.getenv("REGION_LON", "23.6208"))
 
 # Search radius for nearby stations (km)
 STATION_SEARCH_RADIUS_KM = 50
@@ -109,7 +110,7 @@ class TreatmentThresholds:
     PRECIP_HEAVY = 5.0                # mm/h
 
 
-# Stations near Forssa (will be populated dynamically)
+# Stations near the default region centre (populated dynamically at runtime)
 # These are approximate IDs based on geographic proximity
 REGION_STATIONS = [
     4008,   # vt10_Tammela_Heinivaho (closest, ~15km)

@@ -138,7 +138,7 @@ class DigitrafficClient:
                   if s.distance_km <= radius_km
                   and s.collection_status == "GATHERING"]
 
-        logger.info(f"Found {len(nearby)} active stations within {radius_km}km of Forssa")
+        logger.info(f"Found {len(nearby)} active stations within {radius_km}km of the region centre")
         return nearby
 
     def get_station_data(self, station_ids: Optional[List[int]] = None) -> List[WeatherReading]:
@@ -219,7 +219,7 @@ class DigitrafficClient:
 def main():
     client = DigitrafficClient()
 
-    print("\n=== Stations near Forssa (within 50km) ===")
+    print("\n=== Stations near the region centre (within 50km) ===")
     nearby = client.get_nearby_stations(50)
     for station in nearby[:10]:
         print(f"  {station.id}: {station.name} ({station.distance_km}km) - {station.collection_status}")

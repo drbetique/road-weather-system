@@ -386,7 +386,7 @@ def main():
     """Test FMI client"""
     client = FMIClient()
 
-    print("\n=== FMI Weather Forecast for Forssa ===")
+    print("\n=== FMI Weather Forecast for the region centre ===")
     print(f"Location: {REGION_LAT}°N, {REGION_LON}°E")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 

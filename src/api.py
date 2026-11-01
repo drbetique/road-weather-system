@@ -30,7 +30,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from database import DatabaseManager
-from config import REGION_LAT, REGION_LON, REGION_STATIONS
+from config import REGION_NAME, REGION_LAT, REGION_LON, REGION_STATIONS
 from digitraffic_client import DigitrafficClient, StationMetadata, WeatherReading
 from treatment_algorithm import (
     TreatmentDecisionEngine, 
@@ -146,6 +146,9 @@ async def lifespan(app: FastAPI):
     global db
     db = DatabaseManager()
     db.connect()
+    # Reads below depend on the current column names, so migrate before the
+    # first request rather than waiting for the next collection cycle.
+    db.migrate()
     
     # Pre-fetch stations
     try:
@@ -294,7 +297,7 @@ async def get_stations(
     radius_km: float = Query(50, ge=1, le=200, description="Search radius in km"),
     refresh: bool = Query(False, description="Force refresh from API")
 ):
-    """Get road weather stations near Forssa"""
+    """Get road weather stations near the region centre"""
     global cached_stations
     
     if refresh or not cached_stations:
@@ -500,7 +503,7 @@ async def get_dashboard_summary():
         
         return DashboardSummary(
             timestamp=datetime.utcnow().isoformat(),
-            location={"name": "Forssa", "lat": REGION_LAT, "lon": REGION_LON},
+            location={"name": REGION_NAME, "lat": REGION_LAT, "lon": REGION_LON},
             stations_count=len(ensure_stations()),
             readings_count=len(readings),
             critical_count=critical_count,
@@ -577,7 +580,7 @@ async def export_current_data():
         
         return {
             "export_time": datetime.utcnow().isoformat(),
-            "location": "Forssa",
+            "location": REGION_NAME,
             "stations": [
                 {
                     "id": s.id,
