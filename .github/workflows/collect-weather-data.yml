@@ -9,6 +9,11 @@
 #   BACKEND_URL  e.g. https://road-weather-api.onrender.com  (no trailing slash)
 #   API_KEY      must match API_KEY on the Render service
 #
+# Optional repository secret:
+#   RENDER_DEPLOY_HOOK  the service's Deploy Hook URL (Render -> service ->
+#                       Settings -> Deploy Hook). When set, a backend that will
+#                       not wake is redeployed once instead of failing the run.
+#
 # Notes:
 #  - Scheduled runs on GitHub are best-effort. In practice fewer than half of
 #    the requested slots fire, which is why this runs twice an hour to land
@@ -32,11 +37,12 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Wake the backend
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
         run: |
           set -uo pipefail
 
@@ -45,30 +51,52 @@ jobs:
             exit 1
           fi
 
-          # A free Render instance is torn down after 15 minutes idle, and the
-          # cold start is not the ~50s the docs suggest: a recorded start took
-          # 3m40s to run the process and did not receive routed traffic until
-          # 13m42s after the first request.
+          # A free Render instance is torn down after 15 minutes idle and woken
+          # by the next request. Holding the collection POST open across a slow
+          # wake loses the cycle, so waking is a separate phase that polls the
+          # public /health endpoint (no API key needed) until it answers.
           #
-          # Holding a POST open across that is what broke this job -- the
-          # request timed out before the router had anywhere to send it, and a
-          # collection cycle was lost. So the wake is a separate, cheap phase:
-          # poll the public /health endpoint until it answers, and only then
-          # spend a request on collection. /health needs no API key.
-          for attempt in $(seq 1 40); do
-            code=$(curl -sS -o /dev/null -w '%{http_code}' \
-              --max-time 20 "${BACKEND_URL%/}/health") || code="000"
+          # Usually it answers within a minute. Occasionally Render's wake gets
+          # stuck instead: the router returns timeouts and HTTP 429 for as long
+          # as anyone waits, and no instance ever starts. A redeploy clears
+          # that, so after a bounded wait this redeploys once through the
+          # Deploy Hook and waits again.
+          wait_for_health() {
+            local probes=$1 attempt code
+            for attempt in $(seq 1 "$probes"); do
+              code=$(curl -sS -o /dev/null -w '%{http_code}' \
+                --max-time 20 "${BACKEND_URL%/}/health") || code="000"
+              if [ "$code" = "200" ]; then
+                echo "Backend awake after ${attempt} probe(s)."
+                return 0
+              fi
+              echo "Probe ${attempt}: HTTP ${code}, still waking..."
+              sleep 15
+            done
+            return 1
+          }
 
-            if [ "$code" = "200" ]; then
-              echo "Backend awake after ${attempt} probe(s)."
-              exit 0
-            fi
+          # About 6 minutes: well past a normal cold start.
+          wait_for_health 12 && exit 0
 
-            echo "Probe ${attempt}: HTTP ${code}, still waking..."
-            sleep 10
-          done
+          if [ -z "${RENDER_DEPLOY_HOOK:-}" ]; then
+            echo "::error::Backend did not wake and RENDER_DEPLOY_HOOK is not set, so it cannot be redeployed automatically."
+            exit 1
+          fi
 
-          echo "::error::Backend did not answer /health within ~15 minutes. The Render service may be down rather than merely asleep."
+          echo "::warning::Backend did not wake; redeploying it through the Deploy Hook."
+          hook_code=$(curl -sS -X POST -o /dev/null -w '%{http_code}' \
+            --max-time 30 "$RENDER_DEPLOY_HOOK") || hook_code="000"
+          if [ "$hook_code" != "200" ] && [ "$hook_code" != "201" ]; then
+            echo "::error::Deploy Hook returned HTTP ${hook_code}. Check the RENDER_DEPLOY_HOOK secret."
+            exit 1
+          fi
+
+          # A redeploy builds and starts a fresh instance in about 1-2 minutes;
+          # allow about 10.
+          wait_for_health 20 && exit 0
+
+          echo "::error::Backend still did not answer /health after a redeploy. Render may be having an outage."
           exit 1
 
       - name: Trigger a collection cycle
