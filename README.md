@@ -233,7 +233,7 @@ Forecast data: Finnish Meteorological Institute open data, licensed under CC BY 
 
 ## License
 
-Copyright © 2026 Victor Betiku. All rights reserved. See [LICENSE](LICENSE).
+Released under the [MIT License](LICENSE). Copyright © 2026 Victor Betiku.
 
 ## Author
 
