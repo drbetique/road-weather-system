@@ -40,6 +40,9 @@ services:
       # which default to the original deployment's coordinates when unset.
       - key: REGION_NAME
         value: Monitored region
+      # How many of the closest stations are collected (the rest are known but not read).
+      - key: MAX_STATIONS
+        value: "15"
       # Shared secret required by every /api/* route. Set in the Render
       # dashboard; must match API_KEY in the Vercel project.
       - key: API_KEY

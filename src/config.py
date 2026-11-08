@@ -16,6 +16,10 @@ REGION_LON = float(os.getenv("REGION_LON", "23.6208"))
 # Search radius for nearby stations (km)
 STATION_SEARCH_RADIUS_KM = 50
 
+# How many of the discovered stations (closest first) are collected and shown.
+# Stations beyond this limit are known but never read.
+MAX_STATIONS = max(1, int(os.getenv("MAX_STATIONS", "15")))
+
 # Digitraffic API endpoints
 DIGITRAFFIC_BASE_URL = "https://tie.digitraffic.fi/api"
 WEATHER_STATIONS_URL = f"{DIGITRAFFIC_BASE_URL}/weather/v1/stations"

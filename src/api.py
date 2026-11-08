@@ -30,7 +30,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from database import DatabaseManager
-from config import REGION_NAME, REGION_LAT, REGION_LON, REGION_STATIONS
+from config import MAX_STATIONS, REGION_NAME, REGION_LAT, REGION_LON, REGION_STATIONS
 from digitraffic_client import DigitrafficClient, StationMetadata, WeatherReading
 from treatment_algorithm import (
     TreatmentDecisionEngine, 
@@ -529,7 +529,7 @@ async def get_dashboard_summary():
 async def get_map_stations():
     """Get station data formatted for map display"""
     try:
-        station_ids = [s.id for s in ensure_stations()[:15]]
+        station_ids = [s.id for s in ensure_stations()[:MAX_STATIONS]]
         readings = digitraffic_client.get_station_data(station_ids)
         station_names = {s.id: s.name for s in ensure_stations()}
         recommendations = analyze_area(readings, station_names)
@@ -538,7 +538,7 @@ async def get_map_stations():
         reading_by_station = {r.station_id: r for r in readings}
         
         markers = []
-        for station in ensure_stations()[:15]:
+        for station in ensure_stations()[:MAX_STATIONS]:
             reading = reading_by_station.get(station.id)
             rec = rec_by_station.get(station.id)
             
@@ -637,7 +637,7 @@ def run_collection(request: Request):
 
     started = datetime.utcnow()
     try:
-        collector.run_collection_cycle()
+        readings_collected = collector.run_collection_cycle()
     except Exception as e:
         logger.error(f"Collection cycle failed: {e}", exc_info=True)
         raise HTTPException(status_code=503, detail="Collection cycle failed")
@@ -646,7 +646,9 @@ def run_collection(request: Request):
         "status": "ok",
         "started_at": started.isoformat(),
         "duration_seconds": round((datetime.utcnow() - started).total_seconds(), 1),
-        "stations": len(collector.stations),
+        "stations": len(collector.monitored_stations()),
+        "stations_available": len(collector.stations),
+        "readings": readings_collected,
     }
 
 

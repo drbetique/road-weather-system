@@ -191,6 +191,7 @@ The monitored region is set per deployment through environment variables:
 | `REGION_NAME` | `Monitored region` | Display name returned by the API |
 | `REGION_LAT` | `60.8143` | Latitude of the region centre |
 | `REGION_LON` | `23.6208` | Longitude of the region centre |
+| `MAX_STATIONS` | `15` | How many of the closest stations are collected and shown |
 
 Stations are discovered within `STATION_SEARCH_RADIUS_KM` of the centre. Other
 tuning lives in `src/config.py`:

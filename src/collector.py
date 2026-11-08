@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
 load_dotenv(env_path)
 
-from config import POLLING_INTERVAL_SECONDS, REGION_LAT, REGION_LON
+from config import MAX_STATIONS, POLLING_INTERVAL_SECONDS, REGION_LAT, REGION_LON
 from digitraffic_client import DigitrafficClient
 from fmi_client import FMIClient
 from treatment_algorithm import analyze_area
@@ -99,9 +99,13 @@ class DataCollector:
         
         return True
     
+    def monitored_stations(self):
+        """The closest MAX_STATIONS stations: the ones actually collected."""
+        return self.stations[:MAX_STATIONS]
+
     def collect_weather_data(self):
-        """Collect current weather data from all stations"""
-        station_ids = [s.id for s in self.stations[:15]]  # Top 15 closest
+        """Collect current weather data from the monitored stations"""
+        station_ids = [s.id for s in self.monitored_stations()]
         
         try:
             readings = self.digitraffic.get_station_data(station_ids)
@@ -188,6 +192,7 @@ class DataCollector:
         
         cycle_duration = (datetime.now() - cycle_start).total_seconds()
         logger.info(f"Cycle completed in {cycle_duration:.1f}s")
+        return len(readings)
     
     def run(self, interval_seconds: int = POLLING_INTERVAL_SECONDS):
         """Run the collector service"""
