@@ -70,6 +70,10 @@ CREATE INDEX IF NOT EXISTS idx_readings_station_time
     ON weather_readings(station_id, measured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_readings_measured_at 
     ON weather_readings(measured_at DESC);
+-- A station repeats the same measured_at until it measures again; this makes a repeat
+-- a skipped insert instead of a duplicate row.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_weather_readings_station_time 
+    ON weather_readings(station_id, measured_at);
 
 -- Partitioning by month for better performance (optional, for production)
 -- CREATE TABLE weather_readings_2026_02 PARTITION OF weather_readings

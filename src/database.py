@@ -88,6 +88,10 @@ CREATE INDEX IF NOT EXISTS idx_readings_station_time
     ON weather_readings(station_id, measured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_readings_measured_at 
     ON weather_readings(measured_at DESC);
+-- A station repeats the same measured_at until it measures again; this makes a repeat
+-- a skipped insert instead of a duplicate row.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_weather_readings_station_time 
+    ON weather_readings(station_id, measured_at);
 
 -- Partitioning by month for better performance (optional, for production)
 -- CREATE TABLE weather_readings_2026_02 PARTITION OF weather_readings
@@ -463,7 +467,12 @@ class DatabaseManager:
             self.conn.rollback()
     
     def insert_reading(self, reading) -> Optional[str]:
-        """Insert weather reading and return UUID"""
+        """Insert a weather reading and return its UUID.
+
+        Returns None when the reading was already stored: a station reports the
+        same measured_at until it measures again, and the unique index on
+        (station_id, measured_at) turns that repeat into a skipped insert.
+        """
         if not self.conn:
             return None
         
@@ -477,7 +486,8 @@ class DatabaseManager:
             wind_speed, wind_gust, wind_direction, visibility_km
         ) VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-        ) RETURNING id
+        ) ON CONFLICT DO NOTHING
+        RETURNING id
         """
         try:
             with self.conn.cursor() as cur:
